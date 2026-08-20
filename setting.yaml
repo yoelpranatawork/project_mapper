@@ -1,0 +1,9 @@
+exclude:
+  files:
+  - .gitignore
+  - result.txt
+  folders:
+  - .venv
+  - venv
+show_log: false
+result_filename: result.txt
