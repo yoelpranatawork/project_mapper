@@ -17,13 +17,14 @@ DEFAULT_SETTING = {
 }
 
 
-def read_setting():
+def read_setting(application_dir):
     # Start with a copy of the default settings.
     #
     # deepcopy() is important here because DEFAULT_SETTING contains
     # dictionaries and lists. A normal copy could cause changes to
     # affect DEFAULT_SETTING itself.
     return_value = copy.deepcopy(DEFAULT_SETTING)
+    setting_file_path = os.path.join(application_dir, "setting.yaml")
 
     is_loaded_from_file = False
 
@@ -33,7 +34,7 @@ def read_setting():
         print("Load and read setting file....")
 
         # "with" automatically closes the file after reading.
-        with open("setting.yaml") as stream:
+        with open(setting_file_path) as stream:
             yaml_dict = yaml.safe_load(stream)
 
             # safe_load() can return None when the YAML file is empty.
@@ -63,7 +64,7 @@ def read_setting():
     # If setting.yaml could not be loaded, create a new one
     # containing the default settings.
     if not is_loaded_from_file:
-        with open("setting.yaml", "w") as file:
+        with open(setting_file_path, "w") as file:
             yaml.safe_dump(return_value, file)
 
             print(
@@ -94,7 +95,7 @@ def sort_dir_contents(content_path):
     return (is_file, lower_case)
 
 
-def read_dir_structure_recursive(setting, executable_dir):
+def read_dir_structure_recursive(setting, working_dir):
     # This function is currently not used.
     #
     # It will eventually contain a recursive version of
@@ -121,7 +122,7 @@ def is_excluded(excluded_folders, excluded_files, dir_item) -> bool:
     return False
 
 
-def read_dir_structure_iterative(setting, executable_dir):
+def read_dir_structure_iterative(setting, working_dir):
     return_value = []
 
     # Convert the exclusion lists into sets.
@@ -135,7 +136,7 @@ def read_dir_structure_iterative(setting, executable_dir):
     #
     # A stack follows LIFO:
     # Last In, First Out.
-    stack = [executable_dir]
+    stack = [working_dir]
 
     log_message(setting, "Checking below items:")
 
@@ -184,16 +185,16 @@ def read_dir_structure_iterative(setting, executable_dir):
     return return_value
 
 
-def read_dir_structure(setting, executable_dir):
+def read_dir_structure(setting, working_dir):
     # Read the directory structure and return a list containing
     # folders and files.
     #
     # The iterative implementation is currently being used.
-    return_value = read_dir_structure_iterative(setting, executable_dir)
+    return_value = read_dir_structure_iterative(setting, working_dir)
 
     # Later, we can switch to the recursive implementation:
     #
-    # return_value = read_dir_structure_recursive(setting, executable_dir)
+    # return_value = read_dir_structure_recursive(setting, working_dir)
 
     return return_value
 
@@ -393,7 +394,7 @@ def append_file_contents_to_tree_string(setting, dir_structure_data, dir_tree_st
     return dir_tree_str
 
 
-def write_dir_structure_tree_to_file(setting, executable_dir, dir_tree_str):
+def write_dir_structure_tree_to_file(setting, working_dir, dir_tree_str):
     return_value = None
 
     # Get the result filename from the setting.
@@ -403,7 +404,7 @@ def write_dir_structure_tree_to_file(setting, executable_dir, dir_tree_str):
     #
     # os.path.join() handles the path separator correctly
     # for Windows, Linux, and macOS.
-    result_file_path = os.path.join(executable_dir, result_filename)
+    result_file_path = os.path.join(working_dir, result_filename)
 
     # Write the directory tree string into the result file.
     #
@@ -435,26 +436,33 @@ def main():
     # Clear the console in an OS-independent way.
     clear_screen()
 
-    # Read the application settings.
-    setting = read_setting()
-
-    # Find the directory where the program is running.
+    # Find the directory where the application executable is located.
     #
     # When the program has been packaged into an executable,
     # sys.executable points to that executable.
     #
     # Otherwise, __file__ points to this Python source file.
     if getattr(sys, "frozen", False):
-        executable_dir = os.path.dirname(sys.executable)
+        application_dir = os.path.dirname(sys.executable)
     else:
-        executable_dir = os.path.dirname(os.path.abspath(__file__))
+        application_dir = os.path.dirname(os.path.abspath(__file__))
 
-    log_message(setting, f"Program directory: {executable_dir}")
+    # This is the current working directory.
+    #
+    # This is where we want to:
+    # - traverse folders and files
+    # - create result.txt
+    working_dir = os.getcwd()
+
+    # Read the application settings.
+    setting = read_setting(application_dir)
+
+    log_message(setting, f"Program directory: {application_dir}")
 
     # Read the folder/file structure.
     log_message(setting, "Reading directory structure...")
 
-    dir_structure_data = read_dir_structure(setting, executable_dir)
+    dir_structure_data = read_dir_structure(setting, working_dir)
 
     log_message(setting, "Done reading directory structure.")
 
@@ -469,7 +477,7 @@ def main():
     # to the directory tree string.
     log_message(setting, "Reading file contents...")
 
-    dir_tree_str = append_file_contents_to_tree_string(setting, dir_structure_data, dir_tree_str, executable_dir)
+    dir_tree_str = append_file_contents_to_tree_string(setting, dir_structure_data, dir_tree_str, working_dir)
 
     log_message(setting, "Done reading file contents.")
 
@@ -477,7 +485,7 @@ def main():
     log_message(setting, f"Directory tree result:\n{dir_tree_str}")
 
     # Save the result to the output file.
-    result_file_path = write_dir_structure_tree_to_file(setting, executable_dir, dir_tree_str)
+    result_file_path = write_dir_structure_tree_to_file(setting, working_dir, dir_tree_str)
 
     print(f"Success! Result was saved to: {result_file_path}")
 

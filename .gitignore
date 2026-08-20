@@ -8,3 +8,8 @@ venv/
 
 # Generated result file
 result.txt
+
+# PyInstaller build files
+build/
+dist/
+*.spec
