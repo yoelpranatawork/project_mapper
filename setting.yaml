@@ -1,9 +1,14 @@
+result_filename: result.txt
+show_log: false
 exclude:
-  files:
-  - .gitignore
-  - result.txt
   folders:
   - .venv
   - venv
-show_log: false
-result_filename: result.txt
+  - .git
+  files:
+  - .gitignore
+  - result.txt
+  - README.md
+  extensions:
+  - .pyc
+  - .log

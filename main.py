@@ -9,68 +9,110 @@ import yaml
 # or cannot be loaded correctly.
 DEFAULT_SETTING = {
     "result_filename": "result.txt",
-    "show_log": True,
+    "show_log": False,
     "exclude": {
-        "folders": [".venv", "venv"],
-        "files": [".gitignore", "result.txt"]
+        "folders": [".venv", "venv", ".git"],
+        "files": [".gitignore", "result.txt", "README.md"],
+        "extensions": [".pyc", ".log"]
     }
 }
 
 
 def read_setting(application_dir):
-    # Start with a copy of the default settings.
-    #
-    # deepcopy() is important here because DEFAULT_SETTING contains
-    # dictionaries and lists. A normal copy could cause changes to
-    # affect DEFAULT_SETTING itself.
-    return_value = copy.deepcopy(DEFAULT_SETTING)
     setting_file_path = os.path.join(application_dir, "setting.yaml")
 
-    is_loaded_from_file = False
+    # Start with a copy of the default settings.
+    #
+    # deepcopy() is important because DEFAULT_SETTING contains
+    # dictionaries and lists.
+    return_value = copy.deepcopy(DEFAULT_SETTING)
 
     try:
-        # This message is shown before we know whether logging
-        # is enabled because we need to read the setting first.
         print("Load and read setting file....")
 
         # "with" automatically closes the file after reading.
-        with open(setting_file_path) as stream:
+        with open(setting_file_path, encoding="utf-8") as stream:
             yaml_dict = yaml.safe_load(stream)
 
-            # safe_load() can return None when the YAML file is empty.
-            if yaml_dict is not None:
+        # safe_load() returns None when the YAML file is empty.
+        if yaml_dict is None:
+            yaml_dict = {}
 
-                # We expect the top-level YAML structure
-                # to be a dictionary.
-                if isinstance(yaml_dict, dict):
-                    # Update the default settings with values
-                    # from setting.yaml.
-                    #
-                    # This means new default settings will still exist
-                    # when they are missing from an older setting.yaml.
-                    return_value.update(yaml_dict)
+        # The top-level YAML structure must be a dictionary.
+        if not isinstance(yaml_dict, dict):
+            raise ValueError("Setting file must contain a dictionary.")
 
-                    is_loaded_from_file = True
+    except (FileNotFoundError, yaml.YAMLError, OSError, ValueError):
+        # If the setting file does not exist or cannot be loaded,
+        # create a new one using all default settings.
+        with open(setting_file_path, "w", encoding="utf-8") as file:
+            yaml.safe_dump(return_value, file, sort_keys=False)
 
-                    print("Done loading setting file.")
+        print(
+            "Setting was loaded with default value "
+            "and setting file was rewritten."
+        )
 
-    except Exception:
-        # For now, ignore errors and use the default settings.
-        #
-        # Later, we can make this more specific and show
-        # the actual error.
-        pass
+        return return_value
 
-    # If setting.yaml could not be loaded, create a new one
-    # containing the default settings.
-    if not is_loaded_from_file:
-        with open(setting_file_path, "w") as file:
-            yaml.safe_dump(return_value, file)
+    # ------------------------------------------------------------
+    # show_log
+    # ------------------------------------------------------------
 
-            print(
-                "Setting was loaded with default value "
-                "and setting file was rewritten."
-            )
+    # show_log is optional.
+    #
+    # If it is missing or invalid, use the default value.
+    if "show_log" not in yaml_dict or not isinstance(yaml_dict["show_log"], bool):
+        yaml_dict["show_log"] = DEFAULT_SETTING["show_log"]
+
+    # ------------------------------------------------------------
+    # result_filename
+    # ------------------------------------------------------------
+
+    # result_filename is optional.
+    #
+    # If it is missing, invalid, or empty, use the default value.
+    if (
+        "result_filename" not in yaml_dict
+        or not isinstance(yaml_dict["result_filename"], str)
+        or not yaml_dict["result_filename"].strip()
+    ):
+        yaml_dict["result_filename"] = DEFAULT_SETTING["result_filename"]
+
+    # ------------------------------------------------------------
+    # exclude
+    # ------------------------------------------------------------
+
+    # The exclude section belongs to the user.
+    #
+    # We do not add missing files, folders, or extensions here.
+    #
+    # This means all of these are valid:
+    #
+    # exclude:
+    #
+    # exclude:
+    #   files:
+    #     - .gitignore
+    #
+    # exclude:
+    #   folders:
+    #     - .git
+    #
+    # Missing categories simply mean that nothing is excluded
+    # for that category.
+
+    # Use the settings from the YAML file.
+    return_value = yaml_dict
+
+    # Rewrite the YAML file so missing/invalid show_log and
+    # result_filename values are repaired.
+    #
+    # Existing exclude settings are preserved as they are.
+    with open(setting_file_path, "w", encoding="utf-8") as file:
+        yaml.safe_dump(return_value, file, sort_keys=False)
+
+    print("Done loading setting file.")
 
     return return_value
 
@@ -105,19 +147,28 @@ def read_dir_structure_recursive(setting, working_dir):
     return return_value
 
 
-def is_excluded(excluded_folders, excluded_files, dir_item) -> bool:
+def is_excluded(excluded_folders, excluded_files, excluded_extensions, dir_item):
     # Check whether the current item should be excluded.
     #
     # A folder is excluded when its name is in excluded_folders.
     # A file is excluded when its name is in excluded_files.
-    if (
-        dir_item.is_file()
-        and dir_item.name in excluded_files
-    ) or (
-        dir_item.is_dir()
-        and dir_item.name in excluded_folders
-    ):
+    #
+    # All names have already been normalized to lowercase.
+
+    # Exclude folders by their exact name.
+    if dir_item.is_dir() and dir_item.name.lower() in excluded_folders:
         return True
+
+    # Exclude files by their exact name.
+    if dir_item.is_file() and dir_item.name.lower() in excluded_files:
+        return True
+
+    # Exclude files by their extension.
+    if dir_item.is_file():
+        file_extension = os.path.splitext(dir_item.name.lower())[1]
+
+        if file_extension in excluded_extensions:
+            return True
 
     return False
 
@@ -125,12 +176,76 @@ def is_excluded(excluded_folders, excluded_files, dir_item) -> bool:
 def read_dir_structure_iterative(setting, working_dir):
     return_value = []
 
-    # Convert the exclusion lists into sets.
+    # Get the exclude section.
     #
-    # Checking whether something exists in a set is generally
-    # faster than checking in a list.
-    excluded_folders = set(setting["exclude"]["folders"])
-    excluded_files = set(setting["exclude"]["files"])
+    # If exclude does not exist, use an empty dictionary.
+    #
+    # This means the following is valid:
+    #
+    # show_log: false
+    # result_filename: result.txt
+    #
+    # with no exclude section at all.
+    exclude = setting.get("exclude") or {}
+
+    # Get the excluded folders.
+    #
+    # Missing folders or an empty value means nothing is excluded.
+    #
+    # Names are normalized so, for example:
+    #
+    #     .GIT
+    #
+    # is treated the same as:
+    #
+    #     .git
+    excluded_folders = {
+        folder.strip().lower()
+        for folder in exclude.get("folders", []) or []
+        if isinstance(folder, str)
+    }
+
+    # Get the excluded files.
+    #
+    # Names are normalized for case-insensitive comparison.
+    excluded_files = {
+        file.strip().lower()
+        for file in exclude.get("files", []) or []
+        if isinstance(file, str)
+    }
+
+    # Get the excluded extensions.
+    #
+    # The user can write:
+    #
+    #     .py
+    #
+    # or:
+    #
+    #     py
+    #
+    # or:
+    #
+    #     *.py
+    #
+    # They all become:
+    #
+    #     .py
+    excluded_extensions = set()
+
+    for extension in exclude.get("extensions", []) or []:
+        if not isinstance(extension, str):
+            continue
+
+        extension = extension.strip().lower()
+
+        if extension.startswith("*"):
+            extension = extension[1:]
+
+        if not extension.startswith("."):
+            extension = "." + extension
+
+        excluded_extensions.add(extension)
 
     # We use a stack to perform the directory traversal.
     #
@@ -177,7 +292,7 @@ def read_dir_structure_iterative(setting, working_dir):
                 for dir_item in dir_contents:
 
                     # Do not put excluded items onto the stack.
-                    if not is_excluded(excluded_folders, excluded_files, dir_item):
+                    if not is_excluded(excluded_folders, excluded_files, excluded_extensions, dir_item):
                         stack.append(dir_item.path)
 
     log_message(setting, "")

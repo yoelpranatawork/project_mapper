@@ -8,7 +8,8 @@ the contents of text files into a single result file.
 - Generates a directory tree using tree characters.
 - Lists folders before files.
 - Sorts folders and files alphabetically.
-- Allows folders and files to be excluded.
+- Allows folders, files, and file extensions to be excluded.
+- Supports optional exclusion categories.
 - Concatenates file contents into the result.
 - Configurable output filename.
 - Optional screen logging.
@@ -199,6 +200,9 @@ Example:
       files:
         - .gitignore
         - result.txt
+      extensions:
+        - .pyc
+        - .log
 
 ### result_filename
 
@@ -209,6 +213,11 @@ Example:
     result_filename: result.txt
 
 The result file is always created in the working directory.
+
+If `result_filename` is missing, invalid, or empty, the default value
+is automatically used:
+
+    result.txt
 
 ### show_log
 
@@ -222,11 +231,41 @@ Set it to `false` to disable progress logging:
 
     show_log: false
 
+If `show_log` is missing or invalid, the default value is automatically
+used:
+
+    false
+
 The final success message is still displayed.
 
 ### exclude
 
-Specifies folders and files that should not be included in the scan.
+Specifies folders, files, and file extensions that should not be
+included in the scan.
+
+The `exclude` section is optional.
+
+Each child of `exclude` is also optional:
+
+- `folders`
+- `files`
+- `extensions`
+
+Missing exclude categories mean that nothing is excluded for that
+category.
+
+The entire `exclude` section can also be omitted.
+
+For example, this is valid:
+
+    result_filename: result.txt
+    show_log: false
+
+In this case, nothing is excluded.
+
+### Excluded folders
+
+Folders can be excluded by their exact folder name.
 
 Example:
 
@@ -234,13 +273,81 @@ Example:
       folders:
         - .venv
         - venv
+        - .git
+
+Excluded folders are skipped entirely, including all of their contents.
+
+Folder names are compared case-insensitively.
+
+### Excluded files
+
+Files can be excluded by their exact file name.
+
+Example:
+
+    exclude:
       files:
         - .gitignore
         - result.txt
-
-Excluded folders are skipped entirely.
+        - README.md
 
 Excluded files are not included in the directory tree or file contents.
+
+File names are compared case-insensitively.
+
+### Excluded extensions
+
+Files can be excluded by their file extension.
+
+Example:
+
+    exclude:
+      extensions:
+        - .pyc
+        - .log
+
+Extensions can be written in several forms.
+
+For example:
+
+    .py
+
+    py
+
+    *.py
+
+All of these forms are normalized and treated as:
+
+    .py
+
+Extension comparisons are case-insensitive.
+
+### Combining exclude categories
+
+The exclude categories can be used independently or together.
+
+For example:
+
+    exclude:
+      folders:
+        - .git
+      files:
+        - .gitignore
+      extensions:
+        - .pyc
+        - .log
+
+Only the categories specified by the user are applied.
+
+For example:
+
+    exclude:
+      folders:
+        - .git
+
+In this case, only `.git` folders are excluded.
+
+No files or extensions are excluded.
 
 ## Example: Using the Executable on Multiple Projects
 
@@ -288,13 +395,13 @@ containing the executable and supporting files.
 
 Stable versions are published as GitHub Releases.
 
-The version tag for this release is:
+The current stable version is:
 
-    v1.0.0
+    v1.0.2
 
 The standalone Windows executable can be attached to the corresponding
 GitHub Release.
 
 ## Version
 
-1.0.0
+1.0.2
