@@ -10,11 +10,13 @@ the contents of text files into a single result file.
 - Sorts folders and files alphabetically.
 - Allows folders, files, and file extensions to be excluded.
 - Supports optional exclusion categories.
+- Automatically excludes the configured result file.
 - Concatenates file contents into the result.
 - Configurable output filename.
 - Optional screen logging.
 - Uses the native path format of the operating system.
 - Works on Windows, Linux, and macOS.
+- Supports `--help` and `--version` command-line options.
 - Can be compiled into a standalone executable.
 - Can be run from any working directory.
 
@@ -42,6 +44,9 @@ Install the required Python package:
 A pre-built Windows executable can be downloaded from the
 GitHub Releases page.
 
+The release contains only the standalone `.exe` file.
+The configuration YAML file does not need to be downloaded separately.
+
 The executable is a single `.exe` file and does not require Python
 or PyYAML to be installed.
 
@@ -65,7 +70,29 @@ you can simply run:
     project_mapper
 
 The program scans the current working directory and generates
-a result file according to the settings in `setting.yaml`.
+a result file according to the settings in
+`project_mapper_setting.yaml`.
+
+### Command-line options
+
+Display the help information:
+
+    project_mapper --help
+
+or:
+
+    project_mapper -h
+
+Display the application version:
+
+    project_mapper --version
+
+or:
+
+    project_mapper -v
+
+The version option displays the application name and version without
+loading the settings or scanning the working directory.
 
 ## Working Directory and Application Directory
 
@@ -94,8 +121,8 @@ The application directory is the directory containing the executable.
 
 This directory is used for:
 
-- Reading `setting.yaml`.
-- Creating `setting.yaml` if it does not exist.
+- Reading `project_mapper_setting.yaml`.
+- Creating `project_mapper_setting.yaml` if it does not exist.
 
 For example, if the executable is located at:
 
@@ -111,24 +138,31 @@ This separation allows `project_mapper.exe` to be placed on the system PATH
 and used to scan different projects without copying the executable into
 each project.
 
-## Important: setting.yaml
+## Important: project_mapper_setting.yaml
 
-`setting.yaml` belongs to the application directory, not the working
-directory.
+`project_mapper_setting.yaml` belongs to the application directory, not the
+working directory.
 
 For example:
 
     C:\Tools\project_mapper\
-    ├── project_mapper.exe
-    └── setting.yaml
+    └── project_mapper.exe
 
-You can configure the behavior of the executable by editing this file.
+On the first normal run, the program automatically creates:
 
-If `setting.yaml` does not exist, the program creates it automatically
+    C:\Tools\project_mapper\project_mapper_setting.yaml
+
 using the default settings.
 
-If the executable is copied to another directory, its `setting.yaml`
-should be copied there as well if you want to keep the same configuration.
+Therefore, the configuration YAML file does not need to be included
+with the executable when downloading a GitHub Release.
+
+After the first run, you can edit the generated
+`project_mapper_setting.yaml` file to customize the application.
+
+If the executable is copied to another directory, a new
+`project_mapper_setting.yaml` will be created there automatically
+on the first normal run.
 
 ## Output
 
@@ -160,8 +194,7 @@ For example:
     ├── main.py
     ├── main.py.bak
     ├── main2.py
-    ├── main2.py.bak
-    └── setting.yaml
+    └── main2.py.bak
 
     ==================================================
 
@@ -183,9 +216,13 @@ For example:
 The path separator shown in the result follows the operating system.
 For example, Windows uses `\`, while Linux and macOS use `/`.
 
+The configured result filename is automatically excluded from the scan.
+This prevents the generated result file from being included in the next
+project mapping.
+
 ## Configuration
 
-The program uses `setting.yaml` for configuration.
+The program uses `project_mapper_setting.yaml` for configuration.
 
 Example:
 
@@ -199,10 +236,13 @@ Example:
         - venv
       files:
         - .gitignore
-        - result.txt
+        - README.md
       extensions:
         - .pyc
         - .log
+
+The configuration file is created automatically with default values
+if it does not exist or cannot be loaded correctly.
 
 ### result_filename
 
@@ -213,6 +253,9 @@ Example:
     result_filename: result.txt
 
 The result file is always created in the working directory.
+
+The configured result filename is automatically excluded from the scan.
+It does not need to be added manually to `exclude.files`.
 
 If `result_filename` is missing, invalid, or empty, the default value
 is automatically used:
@@ -261,7 +304,7 @@ For example, this is valid:
     result_filename: result.txt
     show_log: false
 
-In this case, nothing is excluded.
+In this case, no additional folders, files, or extensions are excluded.
 
 ### Excluded folders
 
@@ -288,10 +331,12 @@ Example:
     exclude:
       files:
         - .gitignore
-        - result.txt
         - README.md
 
 Excluded files are not included in the directory tree or file contents.
+
+The configured `result_filename` is automatically excluded even when
+it is not listed here.
 
 File names are compared case-insensitively.
 
@@ -347,7 +392,37 @@ For example:
 
 In this case, only `.git` folders are excluded.
 
-No files or extensions are excluded.
+No additional files or extensions are excluded.
+
+## Setting Validation and Repair
+
+The program validates the contents of
+`project_mapper_setting.yaml` when it is loaded.
+
+If a setting is missing or invalid, the program uses the appropriate
+default value and repairs the configuration file when necessary.
+
+For example, an invalid `show_log` value is replaced with:
+
+    show_log: false
+
+An invalid `result_filename` is replaced with:
+
+    result_filename: result.txt
+
+The `exclude` categories are validated independently.
+
+This means an invalid category does not automatically replace the
+other valid categories.
+
+For example:
+
+    exclude:
+      files:
+        - .gitignore
+      folders: invalid-value
+
+The valid `files` configuration is preserved while `folders` is repaired.
 
 ## Example: Using the Executable on Multiple Projects
 
@@ -365,7 +440,8 @@ and:
 
     D:\Projects\ProjectB> project_mapper
 
-The same executable and configuration are used for both projects.
+The same executable and application configuration are used for both
+projects.
 
 The output is created separately in each working directory:
 
@@ -391,17 +467,27 @@ The resulting executable will be created at:
 The `--onefile` option creates a single executable instead of a directory
 containing the executable and supporting files.
 
+The generated executable does not contain
+`project_mapper_setting.yaml`. The configuration file is created
+automatically in the application directory when the executable is
+first run normally.
+
 ## GitHub Release
 
 Stable versions are published as GitHub Releases.
 
 The current stable version is:
 
-    v1.0.2
+    v1.0.3
 
 The standalone Windows executable can be attached to the corresponding
 GitHub Release.
 
+Only the executable needs to be included in the release.
+
+The configuration file is created automatically when the executable
+is run for the first time.
+
 ## Version
 
-1.0.2
+1.0.3
