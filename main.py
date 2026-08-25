@@ -5,27 +5,37 @@ import sys
 import yaml
 
 
-# These are the settings used when setting.yaml does not exist
+# Application name and version.
+APPLICATION_NAME = "Project Mapper"
+VERSION = "1.0.3"
+
+
+# These are the settings used when project_mapper_setting.yaml does not exist
 # or cannot be loaded correctly.
 DEFAULT_SETTING = {
     "result_filename": "result.txt",
     "show_log": False,
     "exclude": {
-        "folders": [".venv", "venv", ".git"],
+        "folders": [".venv", "venv", ".git", "dist"],
         "files": [".gitignore", "result.txt", "README.md"],
         "extensions": [".pyc", ".log"]
     }
 }
 
+SETTING_FILENAME = "project_mapper_setting.yaml"
 
-def read_setting(application_dir):
-    setting_file_path = os.path.join(application_dir, "setting.yaml")
 
-    # Start with a copy of the default settings.
+def load_setting_file(setting_file_path):
+    # Read and parse the setting file.
     #
-    # deepcopy() is important because DEFAULT_SETTING contains
-    # dictionaries and lists.
-    return_value = copy.deepcopy(DEFAULT_SETTING)
+    # This function is only responsible for loading the YAML file.
+    #
+    # Validation and repair are handled separately by
+    # validate_setting().
+    #
+    # None is returned when the file cannot be loaded correctly.
+    # This allows read_setting() to decide whether all default
+    # settings should be used.
 
     try:
         print("Load and read setting file....")
@@ -35,25 +45,49 @@ def read_setting(application_dir):
             yaml_dict = yaml.safe_load(stream)
 
         # safe_load() returns None when the YAML file is empty.
+        #
+        # An empty setting file is treated as an empty dictionary,
+        # which means optional settings will later be repaired
+        # by validate_setting().
         if yaml_dict is None:
             yaml_dict = {}
 
         # The top-level YAML structure must be a dictionary.
+        #
+        # A YAML file containing something such as:
+        #
+        #     - item1
+        #     - item2
+        #
+        # is not a valid project mapper setting structure.
         if not isinstance(yaml_dict, dict):
             raise ValueError("Setting file must contain a dictionary.")
 
+        return yaml_dict
+
     except (FileNotFoundError, yaml.YAMLError, OSError, ValueError):
-        # If the setting file does not exist or cannot be loaded,
-        # create a new one using all default settings.
-        with open(setting_file_path, "w", encoding="utf-8") as file:
-            yaml.safe_dump(return_value, file, sort_keys=False)
+        # Return None to tell read_setting() that the setting file
+        # could not be loaded correctly.
+        return None
 
-        print(
-            "Setting was loaded with default value "
-            "and setting file was rewritten."
-        )
 
-        return return_value
+def validate_setting(yaml_dict):
+    # Start with a copy of the default settings.
+    #
+    # deepcopy() is important because DEFAULT_SETTING contains
+    # dictionaries and lists.
+    return_value = copy.deepcopy(DEFAULT_SETTING)
+
+    # This tells read_setting() whether the setting file
+    # needs to be rewritten.
+    setting_changed = False
+
+    # If the setting file could not be loaded, use all defaults.
+    #
+    # This case normally does not reach this function because
+    # read_setting() handles a None value separately.
+    if yaml_dict is None:
+        return return_value, setting_changed
 
     # ------------------------------------------------------------
     # show_log
@@ -64,6 +98,7 @@ def read_setting(application_dir):
     # If it is missing or invalid, use the default value.
     if "show_log" not in yaml_dict or not isinstance(yaml_dict["show_log"], bool):
         yaml_dict["show_log"] = DEFAULT_SETTING["show_log"]
+        setting_changed = True
 
     # ------------------------------------------------------------
     # result_filename
@@ -78,6 +113,7 @@ def read_setting(application_dir):
         or not yaml_dict["result_filename"].strip()
     ):
         yaml_dict["result_filename"] = DEFAULT_SETTING["result_filename"]
+        setting_changed = True
 
     # ------------------------------------------------------------
     # exclude
@@ -85,36 +121,155 @@ def read_setting(application_dir):
 
     # The exclude section belongs to the user.
     #
-    # We do not add missing files, folders, or extensions here.
+    # Each exclude member is validated independently.
     #
-    # This means all of these are valid:
+    # This is intentional. For example:
     #
-    # exclude:
+    #     exclude:
+    #       files:
+    #         - .gitignore
+    #       folders: invalid-value
     #
-    # exclude:
-    #   files:
-    #     - .gitignore
+    # will preserve files and replace only folders with its
+    # default value.
     #
-    # exclude:
-    #   folders:
-    #     - .git
+    # Missing members are not added.
     #
-    # Missing categories simply mean that nothing is excluded
-    # for that category.
+    # For example:
+    #
+    #     exclude:
+    #       files:
+    #         - .gitignore
+    #
+    # remains exactly as it is.
+    #
+    # A completely missing exclude section is also allowed.
 
-    # Use the settings from the YAML file.
+    if "exclude" in yaml_dict:
+
+        # The exclude section itself must be a dictionary.
+        #
+        # If it is malformed, replace only the exclude section
+        # with an empty dictionary.
+        #
+        # We intentionally do not replace it with the complete
+        # DEFAULT_SETTING["exclude"] because missing categories
+        # should mean that nothing is excluded.
+        if not isinstance(yaml_dict["exclude"], dict):
+            yaml_dict["exclude"] = {}
+            setting_changed = True
+
+        else:
+            exclude = yaml_dict["exclude"]
+
+            # ----------------------------------------------------
+            # exclude.folders
+            # ----------------------------------------------------
+
+            # If folders is missing, leave it missing.
+            #
+            # If folders exists but is malformed, replace only
+            # folders with the default folders.
+            #
+            # A list is considered structurally valid here.
+            # Individual list values are handled later when the
+            # exclusion list is normalized for directory traversal.
+            if "folders" in exclude:
+                if not isinstance(exclude["folders"], list):
+                    exclude["folders"] = copy.deepcopy(DEFAULT_SETTING["exclude"]["folders"])
+                    setting_changed = True
+
+            # ----------------------------------------------------
+            # exclude.files
+            # ----------------------------------------------------
+
+            # If files is missing, leave it missing.
+            #
+            # If files exists but is malformed, replace only
+            # files with the default files.
+            #
+            # A valid list is preserved exactly as provided by
+            # the user.
+            if "files" in exclude:
+                if not isinstance(exclude["files"], list):
+                    exclude["files"] = copy.deepcopy(DEFAULT_SETTING["exclude"]["files"])
+                    setting_changed = True
+
+            # ----------------------------------------------------
+            # exclude.extensions
+            # ----------------------------------------------------
+
+            # If extensions is missing, leave it missing.
+            #
+            # This is important because the user may intentionally
+            # want to exclude no extensions.
+            #
+            # If extensions exists but is malformed, replace only
+            # extensions with the default extensions.
+            #
+            # A valid list is preserved exactly as provided by
+            # the user.
+            if "extensions" in exclude:
+                if not isinstance(exclude["extensions"], list):
+                    exclude["extensions"] = copy.deepcopy(DEFAULT_SETTING["exclude"]["extensions"])
+                    setting_changed = True
+
+    # Use the validated and repaired settings.
     return_value = yaml_dict
 
-    # Rewrite the YAML file so missing/invalid show_log and
-    # result_filename values are repaired.
+    return return_value, setting_changed
+
+
+def write_setting_file(setting_file_path, setting):
+    # Write the setting dictionary to the YAML file.
     #
-    # Existing exclude settings are preserved as they are.
+    # This function is only responsible for writing the setting file.
+    #
+    # read_setting() decides whether writing is necessary.
+
     with open(setting_file_path, "w", encoding="utf-8") as file:
-        yaml.safe_dump(return_value, file, sort_keys=False)
+        yaml.safe_dump(setting, file, sort_keys=False)
 
-    print("Done loading setting file.")
 
-    return return_value
+def read_setting(application_dir):
+    # Build the full path to the setting file.
+    setting_file_path = os.path.join(application_dir, SETTING_FILENAME)
+
+    # Load the setting file.
+    #
+    # None means the file does not exist or could not be loaded.
+    yaml_dict = load_setting_file(setting_file_path)
+
+    # If the setting file could not be loaded, create a new one
+    # using all default settings.
+    if yaml_dict is None:
+        setting = copy.deepcopy(DEFAULT_SETTING)
+
+        write_setting_file(setting_file_path, setting)
+
+        print("Setting was loaded with default value and setting file was rewritten.")
+
+        return setting
+
+    # Validate and repair the loaded settings.
+    #
+    # setting_changed tells us whether validation actually changed
+    # anything in the setting data.
+    setting, setting_changed = validate_setting(yaml_dict)
+
+    # Rewrite the YAML file only when validation changed something.
+    #
+    # If the setting was already valid, the original file is left
+    # completely untouched.
+    if setting_changed:
+        write_setting_file(setting_file_path, setting)
+
+        print("Setting was repaired and setting file was rewritten.")
+
+    else:
+        print("Done loading setting file.")
+
+    return setting
 
 
 def log_message(setting, message):
@@ -125,7 +280,15 @@ def log_message(setting, message):
 
 def sort_dir_contents(content_path):
     # os.path.isfile() tells us whether the path points to a file.
-    is_file = os.path.isfile(content_path)
+    #
+    # A filesystem error can occur while checking the path.
+    # Returning a safe default keeps sorting from terminating
+    # the whole application.
+    try:
+        is_file = os.path.isfile(content_path)
+
+    except OSError:
+        is_file = False
 
     # lower() makes the alphabetical sorting case-insensitive.
     lower_case = content_path.lower()
@@ -142,12 +305,14 @@ def read_dir_structure_recursive(setting, working_dir):
     #
     # It will eventually contain a recursive version of
     # read_dir_structure_iterative().
+    #
+    # It remains as a placeholder for a future implementation.
     return_value = None
 
     return return_value
 
 
-def is_excluded(excluded_folders, excluded_files, excluded_extensions, dir_item):
+def is_excluded(excluded_folders, excluded_files, excluded_extensions, dir_item, setting):
     # Check whether the current item should be excluded.
     #
     # A folder is excluded when its name is in excluded_folders.
@@ -155,20 +320,39 @@ def is_excluded(excluded_folders, excluded_files, excluded_extensions, dir_item)
     #
     # All names have already been normalized to lowercase.
 
-    # Exclude folders by their exact name.
-    if dir_item.is_dir() and dir_item.name.lower() in excluded_folders:
-        return True
+    try:
+        # Normalize the item name once so all comparisons are
+        # case-insensitive.
+        item_name = dir_item.name.lower()
 
-    # Exclude files by their exact name.
-    if dir_item.is_file() and dir_item.name.lower() in excluded_files:
-        return True
-
-    # Exclude files by their extension.
-    if dir_item.is_file():
-        file_extension = os.path.splitext(dir_item.name.lower())[1]
-
-        if file_extension in excluded_extensions:
+        # Exclude folders by their exact name.
+        if dir_item.is_dir() and item_name in excluded_folders:
             return True
+
+        # Exclude files by their exact name.
+        if dir_item.is_file() and item_name in excluded_files:
+            return True
+
+        # Exclude files by their extension.
+        if dir_item.is_file():
+            file_extension = os.path.splitext(item_name)[1]
+
+            if file_extension in excluded_extensions:
+                return True
+
+    except OSError as error:
+        # The filesystem may no longer allow us to inspect this item.
+        #
+        # This can happen when a file is deleted, permissions change,
+        # or another filesystem problem occurs while scanning.
+        log_message(setting, f"Cannot inspect {dir_item.path}: {error}")
+
+        # Returning True means the item will not be added to the
+        # traversal stack.
+        #
+        # Since we cannot safely inspect the item, skipping it is
+        # safer than accidentally processing it.
+        return True
 
     return False
 
@@ -214,6 +398,18 @@ def read_dir_structure_iterative(setting, working_dir):
         if isinstance(file, str)
     }
 
+    # The configured result filename is always excluded.
+    #
+    # This prevents the generated result file from being read
+    # and included in the next project mapping.
+    #
+    # The user does not need to manually add the result filename
+    # to exclude.files.
+    result_filename = setting.get("result_filename")
+
+    if isinstance(result_filename, str) and result_filename.strip():
+        excluded_files.add(result_filename.strip().lower())
+
     # Get the excluded extensions.
     #
     # The user can write:
@@ -251,6 +447,10 @@ def read_dir_structure_iterative(setting, working_dir):
     #
     # A stack follows LIFO:
     # Last In, First Out.
+    #
+    # The iterative approach avoids using Python's call stack for
+    # directory traversal, which is useful when a project contains
+    # many nested directories.
     stack = [working_dir]
 
     log_message(setting, "Checking below items:")
@@ -261,11 +461,35 @@ def read_dir_structure_iterative(setting, working_dir):
 
         log_message(setting, current_item)
 
-        if os.path.isfile(current_item):
+        # Check whether the current item is a file.
+        #
+        # os.path.isfile() can raise filesystem-related errors
+        # in some situations, so handle them explicitly.
+        try:
+            current_is_file = os.path.isfile(current_item)
+
+        except OSError as error:
+            log_message(setting, f"Cannot inspect {current_item}: {error}")
+            continue
+
+        if current_is_file:
             # Store the type together with the path.
             return_value.append(("file", current_item))
 
-        elif os.path.isdir(current_item):
+            continue
+
+        # Check whether the current item is a directory.
+        #
+        # This is kept separate from the file check so a filesystem
+        # problem can be handled without terminating traversal.
+        try:
+            current_is_dir = os.path.isdir(current_item)
+
+        except OSError as error:
+            log_message(setting, f"Cannot inspect {current_item}: {error}")
+            continue
+
+        if current_is_dir:
             # Store the directory itself.
             return_value.append(("dir", current_item))
 
@@ -279,20 +503,25 @@ def read_dir_structure_iterative(setting, working_dir):
                 # reverse=True is intentional because we are using
                 # a stack. The items are pushed in reverse order so
                 # that they are later popped in the desired order.
-                dir_contents.sort(
-                    key=lambda item: sort_dir_contents(item.path),
-                    reverse=True
-                )
+                dir_contents.sort(key=lambda item: sort_dir_contents(item.path), reverse=True)
 
             except PermissionError:
                 # Some directories may not be accessible.
                 log_message(setting, f"Cannot access {current_item}")
 
+            except OSError as error:
+                # Other filesystem errors should not terminate the
+                # entire traversal.
+                log_message(setting, f"Cannot read directory {current_item}: {error}")
+
             else:
                 for dir_item in dir_contents:
 
                     # Do not put excluded items onto the stack.
-                    if not is_excluded(excluded_folders, excluded_files, excluded_extensions, dir_item):
+                    #
+                    # If the item cannot be inspected, is_excluded()
+                    # will skip it and log the filesystem error.
+                    if not is_excluded(excluded_folders, excluded_files, excluded_extensions, dir_item, setting):
                         stack.append(dir_item.path)
 
     log_message(setting, "")
@@ -362,6 +591,10 @@ def build_tree_string(setting, children, parent_dir, prefix, return_value, root_
         # This keeps the calculation OS-independent.
         item_depth = item_path.count(os.sep) - root_dir.count(os.sep)
 
+        # item_depth is currently used only for logging.
+        #
+        # It provides a simple visual check of the calculated
+        # directory depth when show_log is enabled.
         log_message(setting, base_name + ", depth: " + str(item_depth))
 
         # Only directories can have children.
@@ -479,6 +712,10 @@ def append_file_contents_to_tree_string(setting, dir_structure_data, dir_tree_st
 
         try:
             # Read the file using UTF-8.
+            #
+            # This application is currently intended to consolidate
+            # source code and text files for use with AI tools.
+            # UTF-8 is therefore the expected text encoding.
             with open(item_path, "r", encoding="utf-8") as file:
                 file_content = file.read()
 
@@ -496,15 +733,32 @@ def append_file_contents_to_tree_string(setting, dir_structure_data, dir_tree_st
 
         except UnicodeDecodeError:
             # The file may not be a UTF-8 text file.
+            #
+            # At this stage, the application does not attempt to
+            # detect other encodings. It records the problem and
+            # continues processing the remaining files.
             dir_tree_str += "[Cannot read file as UTF-8]\n\n"
 
             log_message(setting, f"Cannot read file as UTF-8: {relative_path}")
 
         except PermissionError:
             # The file exists but cannot be read.
+            #
+            # Skip this file's contents and continue with the
+            # remaining files.
             dir_tree_str += "[Cannot access file]\n\n"
 
             log_message(setting, f"Cannot access file: {relative_path}")
+
+        except OSError as error:
+            # Other filesystem errors should not terminate the
+            # entire file-reading process.
+            #
+            # The specific error is written to the log while the
+            # output receives a simple, readable message.
+            dir_tree_str += "[Cannot access file]\n\n"
+
+            log_message(setting, f"Cannot read file {relative_path}: {error}")
 
     return dir_tree_str
 
@@ -547,7 +801,58 @@ def clear_screen():
         os.system("clear")
 
 
+def print_help():
+    # Display the command-line help information.
+    #
+    # Help is handled before the screen is cleared or the setting
+    # file is loaded, so it can be used independently of a project.
+    print(f"{APPLICATION_NAME}")
+    print()
+    print("Usage:")
+    print(f"  {APPLICATION_NAME.lower().replace(' ', '_')} [OPTIONS]")
+    print()
+    print("Options:")
+    print("  -h, --help       Show this help message and exit.")
+    print("  -v, --version    Show the application version and exit.")
+
+
+def handle_command_line_arguments():
+    # Check the command-line arguments before doing any other
+    # application work.
+    #
+    # This means --help and --version do not:
+    #
+    # - clear the screen
+    # - load the setting file
+    # - scan the working directory
+    # - create the result file
+    arguments = sys.argv[1:]
+
+    # Show help information.
+    if "-h" in arguments or "--help" in arguments:
+        print_help()
+        return True
+
+    # Show the application version.
+    if "-v" in arguments or "--version" in arguments:
+        print(f"{APPLICATION_NAME} {VERSION}")
+        return True
+
+    # No recognized command-line option was requested.
+    #
+    # Returning False tells main() to continue with normal
+    # project-mapping behavior.
+    return False
+
+
 def main():
+    # Handle command-line options before doing any other work.
+    #
+    # If the function returns True, the requested command has
+    # already been handled and the application can exit normally.
+    if handle_command_line_arguments():
+        return
+
     # Clear the console in an OS-independent way.
     clear_screen()
 
@@ -566,7 +871,13 @@ def main():
     #
     # This is where we want to:
     # - traverse folders and files
-    # - create result.txt
+    # - create the result file
+    #
+    # The application directory and working directory are
+    # intentionally different concepts:
+    #
+    # application_dir -> where Project Mapper is installed
+    # working_dir     -> project being mapped
     working_dir = os.getcwd()
 
     # Read the application settings.
